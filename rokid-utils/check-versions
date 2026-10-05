@@ -1,0 +1,17 @@
+#!/bin/zsh
+# Prints each Rokid agent's version and fails if app.json, lib/version.js
+# and AGENTS.md disagree (the glasses show lib/version.js in small text).
+set -euo pipefail
+root=${0:A:h}/..
+rc=0
+for agent in $root/*/app.json(N); do
+  dir=${agent:h}
+  [[ -f $dir/lib/version.js ]] || continue
+  app=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["version"])' $agent)
+  lib=$(sed -nE "s/.*VERSION = '([^']+)'.*/\1/p" $dir/lib/version.js)
+  if [[ $app == $lib ]]; then print "${dir:t}: $app"; else print -u2 "${dir:t}: app.json $app ≠ lib/version.js $lib"; rc=1; fi
+  # AGENTS.md (packaged with the app) states the version too.
+  doc=$(sed -nE 's/^- \*\*Version\*\*: (.+)$/\1/p' $dir/AGENTS.md 2>/dev/null || true)
+  if [[ -n $doc && $doc != $app ]]; then print -u2 "${dir:t}: app.json $app ≠ AGENTS.md $doc"; rc=1; fi
+done
+exit $rc

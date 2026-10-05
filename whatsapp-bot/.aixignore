@@ -1,0 +1,6 @@
+/README.md
+.gitignore
+*.aix
+.aix/
+config.js
+*.test.mjs

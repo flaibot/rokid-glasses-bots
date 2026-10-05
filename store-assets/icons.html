@@ -1,0 +1,28 @@
+<!doctype html><html><head><meta charset="utf-8"><style>
+body{margin:0;background:transparent}
+.icon{width:512px;height:512px;border-radius:112px;display:none;align-items:center;justify-content:center;position:relative;overflow:hidden}
+.icon::after{content:"";position:absolute;inset:0;border-radius:112px;background:radial-gradient(120% 70% at 30% 0%,rgba(255,255,255,.18),rgba(255,255,255,0) 55%)}
+#hermes{background:linear-gradient(160deg,#1c2340 0%,#0b0f1e 100%)}
+#claude{background:#d97757}
+#whatsapp{background:linear-gradient(160deg,#3be27a 0%,#1fbf5c 100%)}
+</style></head><body>
+<!-- Hermes: a swept wing (original drawing) -->
+<div class="icon" id="hermes"><svg width="400" height="400" viewBox="4 4 92 92">
+<defs><linearGradient id="w" x1="0" y1="1" x2="1" y2="0"><stop offset="0" stop-color="#8fa2ff"/><stop offset="1" stop-color="#ffffff"/></linearGradient></defs>
+<g fill="url(#w)">
+<path d="M30 88 C30 60 42 38 78 10 C70 30 58 44 46 56 C58 50 70 40 84 30 C76 48 62 58 48 66 C60 64 72 58 84 52 C74 66 60 72 44 74 C40 78 36 84 30 88 Z"/>
+</g>
+<path d="M33 84 C38 66 48 50 66 32" stroke="#1c2340" stroke-width="2.2" fill="none" stroke-linecap="round" opacity=".55"/>
+</svg></div>
+<!-- Claude: a rounded radiating spark (original drawing) -->
+<div class="icon" id="claude"><svg width="330" height="330" viewBox="-50 -50 100 100">
+<g fill="#fff">
+<g id="ray"><path d="M-5 -5 L-3.4 -40 Q0 -45.5 3.4 -40 L5 -5 Z"/></g>
+<use href="#ray" transform="rotate(30)"/><use href="#ray" transform="rotate(62)"/><use href="#ray" transform="rotate(88)"/><use href="#ray" transform="rotate(121)"/><use href="#ray" transform="rotate(150)"/><use href="#ray" transform="rotate(182)"/><use href="#ray" transform="rotate(209)"/><use href="#ray" transform="rotate(240)"/><use href="#ray" transform="rotate(271)"/><use href="#ray" transform="rotate(300)"/><use href="#ray" transform="rotate(331)"/>
+<circle r="10"/></g></svg></div>
+<!-- WhatsApp Bot: round chat bubble with a tail, glasses inside (original drawing) -->
+<div class="icon" id="whatsapp"><svg width="350" height="350" viewBox="0 0 100 100" fill="none" stroke="#fff" stroke-linecap="round" stroke-linejoin="round">
+<path d="M50 10 A40 40 0 1 1 30 84.6 L12 90 L17.4 72 A40 40 0 0 1 50 10 Z" stroke-width="6.5"/>
+<g stroke-width="5"><circle cx="37" cy="51" r="8.5"/><circle cx="63" cy="51" r="8.5"/><path d="M45.5 50 Q50 46.5 54.5 50"/><path d="M28.5 49 L23 46"/><path d="M71.5 49 L77 46"/></g>
+</svg></div>
+</body></html>

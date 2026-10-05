@@ -1,0 +1,12 @@
+{
+  "agentName": "Claude Bot",
+  "agentDesc": "Browse the Claude Code sessions on your Mac by worktree, read them, and reply by voice.",
+  "version": "0.5.2",
+  "pages": [
+    "pages/index/index"
+  ],
+  "window": {
+    "navigationBarTitleText": "Claude Bot"
+  },
+  "permissions": ["RECORD_AUDIO", "CAMERA"]
+}

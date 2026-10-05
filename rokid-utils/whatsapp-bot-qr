@@ -1,0 +1,49 @@
+#!/bin/zsh
+# Shows the setup QR code for WhatsApp Bot: the WhatsApp bridge URL on your
+# tailnet plus the bridge token. Open WhatsApp Bot on the glasses (it opens
+# the scanner the first time, or choose "Scan setup QR code"), look at it,
+# tap.
+#
+#   whatsapp-bot-qr              QR in a Preview window (easiest for the camera)
+#   whatsapp-bot-qr --terminal   QR printed in this terminal
+#
+# Settings (environment variables):
+#   WHATSAPP_BOT_PORT   tailnet port the bridge is served on (default 8465)
+#   WHATSAPP_BOT_URL    full URL, overrides the port and tailnet name
+#   WHATSAPP_BRIDGE_HOME  bridge folder (default ~/.whatsapp-bridge)
+#
+# The QR holds the bridge token, which lets anyone holding it read your
+# recent WhatsApp messages and send messages as you. Show it only to your
+# glasses, and close the window afterwards.
+set -euo pipefail
+
+config=${WHATSAPP_BRIDGE_HOME:-$HOME/.whatsapp-bridge}/config.json
+port=${WHATSAPP_BOT_PORT:-8465}
+
+if [[ -z ${WHATSAPP_BOT_URL:-} ]]; then
+  # The Mac's tailnet name: the Hi Rokid app reaches it by name; a bare
+  # tailnet IP did not work in testing. Rerun and rescan after a rename.
+  command -v tailscale >/dev/null || { print -u2 "The tailscale command isn't installed. In the Tailscale app: Settings > Install CLI (see the README)."; exit 1; }
+  host=$(tailscale status --json 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin)["Self"]["DNSName"].rstrip("."))' 2>/dev/null || true)
+  [[ -n $host ]] || { print -u2 "Tailscale isn't connected on this Mac, or MagicDNS is off (the QR uses the Mac's tailnet name)."; exit 1; }
+  WHATSAPP_BOT_URL="http://$host:$port"
+fi
+
+[[ -f $config ]] || { print -u2 "No $config yet: start the WhatsApp bridge once (see whatsapp-bot/README.md)."; exit 1; }
+key=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["token"])' "$config")
+command -v qrencode >/dev/null || { print -u2 "Needs qrencode: brew install qrencode"; exit 1; }
+
+payload=$(python3 -c 'import json,sys; print(json.dumps({"whatsapp": sys.argv[1], "key": sys.argv[2]}))' "$WHATSAPP_BOT_URL" "$key")
+
+if [[ ${1:-} == --terminal ]]; then
+  qrencode -t ANSIUTF8 -m 2 "$payload"
+  exit 0
+fi
+
+# Preview keeps showing the image after the temporary file is deleted.
+png=$(mktemp -t whatsapp-bot-qr).png
+qrencode -o "$png" -s 16 -m 4 "$payload"
+open -a Preview "$png"
+sleep 3
+rm -f "$png" "${png%.png}"
+print "QR shown in Preview for $WHATSAPP_BOT_URL. Close the window when done."

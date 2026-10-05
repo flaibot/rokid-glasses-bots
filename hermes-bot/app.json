@@ -1,0 +1,12 @@
+{
+  "agentName": "Hermes Bot",
+  "agentDesc": "Talk to your own Hermes agent. Say \"Hi Rokid, open Hermes Bot\" or ask it something directly; the reply streams onto the display and is read aloud.",
+  "version": "0.9.2",
+  "pages": [
+    "pages/index/index"
+  ],
+  "window": {
+    "navigationBarTitleText": "Hermes Bot"
+  },
+  "permissions": ["RECORD_AUDIO", "CAMERA"]
+}

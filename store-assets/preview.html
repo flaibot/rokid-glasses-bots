@@ -1,0 +1,78 @@
+<!doctype html><html><head><meta charset="utf-8"><style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&family=JetBrains+Mono:wght@400;600&display=swap');
+*{box-sizing:border-box}body{margin:0;width:1280px;height:720px;font-family:Inter,system-ui,sans-serif;color:#fff;overflow:hidden}
+.slide{width:1280px;height:720px;display:none;position:relative;background:radial-gradient(900px 600px at 80% 20%,var(--glow),transparent 60%),linear-gradient(160deg,#0b0f14,#05070a)}
+.copy{position:absolute;left:80px;top:0;bottom:0;width:430px;display:flex;flex-direction:column;justify-content:center}
+.kicker{font-size:15px;font-weight:600;letter-spacing:.18em;text-transform:uppercase;color:var(--accent);margin-bottom:18px;display:flex;align-items:center;gap:12px}
+.kicker img{width:40px;height:40px;border-radius:10px}
+h1{font-size:50px;line-height:1.06;font-weight:800;margin:0 0 20px;letter-spacing:-.02em}
+p{font-size:20px;line-height:1.5;color:#a9b4c0;margin:0}
+.lens{position:absolute;right:80px;top:110px;width:640px;height:500px;border-radius:48% 48% 44% 44%/40% 40% 56% 56%;background:radial-gradient(circle at 40% 30%,rgba(255,255,255,.07),rgba(255,255,255,.015) 60%),#020403;border:10px solid #1b1f24;box-shadow:0 30px 80px rgba(0,0,0,.6),inset 0 0 60px rgba(0,0,0,.8);display:flex;align-items:center;justify-content:center}
+.hud{width:430px;font-family:'JetBrains Mono',monospace;color:#5dff9a;text-shadow:0 0 8px rgba(93,255,154,.55);font-size:19px;line-height:1.55}
+.hud .h{display:flex;justify-content:space-between;font-weight:600;border-bottom:1px solid rgba(93,255,154,.35);padding-bottom:6px;margin-bottom:8px}
+.row{padding:5px 10px;border-radius:6px;display:flex;justify-content:space-between}
+.row.sel{background:rgba(93,255,154,.16);outline:1px solid rgba(93,255,154,.6)}
+.dim{opacity:.6}.small{font-size:15px}.b{font-weight:600}
+.hint{margin-top:10px;font-size:14px;opacity:.65;border-top:1px solid rgba(93,255,154,.25);padding-top:6px}
+.btn{display:inline-block;border:1px solid #5dff9a;border-radius:6px;padding:2px 12px;margin-right:8px}
+</style></head><body>
+<!-- WhatsApp Bot -->
+<div class="slide" id="wa1" style="--glow:rgba(37,211,102,.22);--accent:#3ee08f">
+<div class="copy"><div class="kicker"><img src="whatsapp-icon.png">WhatsApp Bot</div><h1>Your chats, at eye level.</h1><p>See who's written and what's unread at a glance. Swipe to move, tap to open. No phone in hand.</p></div>
+<div class="lens"><div class="hud"><div class="h"><span>Chats</span><span class="dim">3 unread</span></div>
+<div class="row b"><span>✎ New message</span></div>
+<div class="row sel"><span>● Alex Chen</span><span>2</span></div>
+<div class="row"><span class="dim small">&nbsp;&nbsp;Running 10 min late?</span></div>
+<div class="row"><span>● Family</span><span>1</span></div>
+<div class="row"><span>&nbsp;&nbsp;Priya Nair</span><span class="dim small">9:41</span></div>
+<div class="hint">swipe = move · tap = open</div></div></div></div>
+<div class="slide" id="wa2" style="--glow:rgba(37,211,102,.22);--accent:#3ee08f">
+<div class="copy"><div class="kicker"><img src="whatsapp-icon.png">WhatsApp Bot</div><h1>Read it. Reply by voice.</h1><p>Messages arrive in clean, glanceable pages. Tap once and just say your reply.</p></div>
+<div class="lens"><div class="hud"><div class="h"><span>Alex Chen</span><span class="dim">p1/1</span></div>
+<div class="dim small">Alex · 9:32</div><div>Are we still on for lunch?</div>
+<div class="dim small" style="margin-top:8px">Alex · 9:33</div><div>Running 10 min late, sorry!</div>
+<div class="dim small" style="margin-top:8px">You (speaking)</div><div class="b">No worries, see you at 12:15 ▍</div>
+<div class="hint">pause to finish · tap = done</div></div></div></div>
+<div class="slide" id="wa3" style="--glow:rgba(37,211,102,.22);--accent:#3ee08f">
+<div class="copy"><div class="kicker"><img src="whatsapp-icon.png">WhatsApp Bot</div><h1>“Hi Rokid, tell Mom I'm on my way.”</h1><p>It finds the right contact, even when a name is misheard, and nothing sends until you tap.</p></div>
+<div class="lens"><div class="hud"><div class="h"><span>Send to Mom?</span><span class="dim small">heard “mum”</span></div>
+<div style="font-size:24px;margin:18px 0" class="b">I'm on my way, see you in 20 minutes.</div>
+<div><span class="btn">Tap = send</span><span class="btn dim">Swipe = cancel</span></div>
+<div class="hint">Every message is confirmed first</div></div></div></div>
+<!-- Hermes Bot -->
+<div class="slide" id="he1" style="--glow:rgba(109,93,252,.28);--accent:#9b8cff">
+<div class="copy"><div class="kicker"><img src="hermes-icon.png">Hermes Bot</div><h1>Your own AI agent, hands-free.</h1><p>Ask anything by voice. The answer appears in view and is read aloud, then it listens again.</p></div>
+<div class="lens"><div class="hud"><div class="h"><span>Hermes</span><span class="dim">Fast</span></div>
+<div class="dim small">You</div><div>What's on my calendar this afternoon?</div>
+<div class="dim small" style="margin-top:10px">Hermes</div><div class="b">Two things: design review at 2, and a call with Sam at 4:30. Nothing after 5.</div>
+<div class="hint">Listening… pause to send</div></div></div></div>
+<div class="slide" id="he2" style="--glow:rgba(109,93,252,.28);--accent:#9b8cff">
+<div class="copy"><div class="kicker"><img src="hermes-icon.png">Hermes Bot</div><h1>Short answers. Smart when you need it.</h1><p>Glanceable replies by default. Switch to Smart mode for harder questions, or pick up any past conversation.</p></div>
+<div class="lens"><div class="hud"><div class="h"><span>Menu</span><span class="dim">swipe · tap</span></div>
+<div class="row sel"><span>● Talk</span></div><div class="row"><span>☰ Earlier replies ›</span></div><div class="row"><span>+ New conversation</span></div><div class="row"><span>☰ Past conversations ›</span></div><div class="row"><span>✓ Quick asks ›</span></div>
+<div class="hint">weather · headlines · Fast / Smart</div></div></div></div>
+<div class="slide" id="he3" style="--glow:rgba(109,93,252,.28);--accent:#9b8cff">
+<div class="copy"><div class="kicker"><img src="hermes-icon.png">Hermes Bot</div><h1>Private by design.</h1><p>Connects straight to the agent on your own computer over your private Tailscale network. No middleman servers.</p></div>
+<div class="lens"><div class="hud"><div class="h"><span>Hermes</span><span class="dim">Using web search…</span></div>
+<div class="dim small">You</div><div>Will it rain at 6?</div>
+<div class="dim small" style="margin-top:10px">Hermes</div><div class="b">Light showers likely around 6, about 70%. Bring an umbrella.</div>
+<div class="hint">tap to talk · swipe for menu</div></div></div></div>
+<!-- Claude Bot -->
+<div class="slide" id="cl1" style="--glow:rgba(217,113,74,.28);--accent:#f2a272">
+<div class="copy"><div class="kicker"><img src="claude-icon.png">Claude Bot</div><h1>Your coding sessions, at a glance.</h1><p>Browse every project and session on your Mac and see what Claude is doing, from anywhere.</p></div>
+<div class="lens"><div class="hud"><div class="h"><span>Projects</span><span class="dim">4</span></div>
+<div class="row sel"><span>web-app</span><span class="dim small">2m · busy</span></div><div class="row"><span>mobile</span><span class="dim small">1h</span></div><div class="row"><span>api-server</span><span class="dim small">3h</span></div><div class="row"><span>docs</span><span class="dim small">1d</span></div>
+<div class="hint">swipe = move · tap = open</div></div></div></div>
+<div class="slide" id="cl2" style="--glow:rgba(217,113,74,.28);--accent:#f2a272">
+<div class="copy"><div class="kicker"><img src="claude-icon.png">Claude Bot</div><h1>Keep work moving, by voice.</h1><p>Read Claude's latest reply page by page, then answer out loud. You confirm every message before it's sent.</p></div>
+<div class="lens"><div class="hud"><div class="h"><span>web-app</span><span class="dim">42/42 · p1/2</span></div>
+<div class="dim small">▸ 3 steps: Read, Edit, Bash</div>
+<div class="dim small" style="margin-top:6px">Claude</div><div class="b">Tests pass. I fixed the date parsing bug and added two cases. Want me to open a PR?</div>
+<div class="dim small" style="margin-top:8px">Send to Claude?</div><div>Yes, go ahead and open the PR</div>
+<div class="hint">tap = send · swipe = cancel</div></div></div></div>
+<div class="slide" id="cl3" style="--glow:rgba(217,113,74,.28);--accent:#f2a272">
+<div class="copy"><div class="kicker"><img src="claude-icon.png">Claude Bot</div><h1>Commands one tap away.</h1><p>Check context and usage, compact, run a code review, or send a quick reply, all from a tidy menu.</p></div>
+<div class="lens"><div class="hud"><div class="h"><span>/ Commands</span><span class="dim">swipe · tap</span></div>
+<div class="row dim"><span>‹ Back</span></div><div class="row sel"><span>Context usage</span><span class="dim small">/context</span></div><div class="row"><span>Plan usage</span><span class="dim small">/usage</span></div><div class="row"><span>Compact</span><span class="dim small">/compact</span></div><div class="row"><span>Review changes ›</span></div>
+<div class="hint">Built-in › · Skills ›</div></div></div></div>
+</body></html>

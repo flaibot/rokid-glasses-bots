@@ -1,0 +1,69 @@
+#!/bin/zsh
+# Links the WhatsApp bridge to your WhatsApp account, as a linked device
+# (like WhatsApp Web). Shows WhatsApp's pairing QR code; on your phone open
+# WhatsApp → Settings → Linked devices → Link a device, and scan it. The
+# code changes every 20 seconds or so; this redraws it until linking is done.
+#
+#   whatsapp-link              QR printed in this terminal
+#   whatsapp-link --preview    QR in a Preview window
+#
+# Needs the bridge running (rokid-utils/install-bridge-service --whatsapp).
+# Settings (environment variables):
+#   WHATSAPP_BRIDGE_HOME   bridge folder (default ~/.whatsapp-bridge)
+#
+# To unlink: on your phone, Linked devices → this device → Log out. The
+# bridge then deletes its session and stored messages.
+set -euo pipefail
+
+home=${WHATSAPP_BRIDGE_HOME:-$HOME/.whatsapp-bridge}
+config=$home/config.json
+qrfile=$home/link-qr.txt
+[[ -f $config ]] || { print -u2 "No $config yet: start the WhatsApp bridge first (see whatsapp-bot/README.md)."; exit 1; }
+command -v qrencode >/dev/null || { print -u2 "Needs qrencode: brew install qrencode"; exit 1; }
+read -r port token < <(python3 -c 'import json,sys; c=json.load(open(sys.argv[1])); print(c.get("port", 8792), c["token"])' "$config")
+base=http://127.0.0.1:$port
+
+# The token goes to curl on stdin, so other processes can't read it in ps.
+call() {
+  print -r -- "header = \"Authorization: Bearer $token\"" | curl -s -K - -X "$1" "$base$2"
+}
+
+health=$(call GET /api/health) || { print -u2 "The WhatsApp bridge isn't running on port $port (see whatsapp-bot/README.md)."; exit 1; }
+if [[ $health == *'"linked":true'* ]]; then
+  print "Already linked. To link again, log this device out on your phone first."
+  exit 0
+fi
+call POST /api/link >/dev/null
+
+shown=''
+png=''
+cleanup() { if [[ -n $png ]]; then rm -f "$png" "${png%.png}"; fi; }
+trap cleanup EXIT
+print "Waiting for WhatsApp's pairing code…"
+for i in {1..180}; do
+  health=$(call GET /api/health || true)
+  if [[ $health == *'"linked":true'* ]]; then
+    [[ ${1:-} == --preview ]] || clear
+    print "Linked. Your chats appear on the glasses in a minute or two as WhatsApp sends recent history."
+    exit 0
+  fi
+  code=$(cat "$qrfile" 2>/dev/null || true)
+  if [[ -n $code && $code != $shown ]]; then
+    shown=$code
+    if [[ ${1:-} == --preview ]]; then
+      cleanup
+      png=$(mktemp -t whatsapp-link).png
+      qrencode -o "$png" -s 12 -m 4 "$code"
+      open -g -a Preview "$png"
+      print "New code shown in Preview. Scan it: WhatsApp → Settings → Linked devices → Link a device."
+    else
+      clear
+      qrencode -t ANSIUTF8 -m 2 "$code"
+      print "Scan with your phone: WhatsApp → Settings → Linked devices → Link a device."
+      print "(The code refreshes by itself. Ctrl-C to stop.)"
+    fi
+  fi
+  sleep 1
+done
+print -u2 "Not linked after 3 minutes. Run this again to get a new code."
+exit 1

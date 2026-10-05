@@ -1,0 +1,12 @@
+{
+  "agentName": "WhatsApp Bot",
+  "agentDesc": "Read your recent WhatsApp chats and reply by voice, through a bridge on your own Mac.",
+  "version": "0.1.0",
+  "pages": [
+    "pages/index/index"
+  ],
+  "window": {
+    "navigationBarTitleText": "WhatsApp Bot"
+  },
+  "permissions": ["RECORD_AUDIO", "CAMERA"]
+}

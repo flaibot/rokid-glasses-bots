@@ -1,0 +1,11 @@
+# Built packages and local packer state
+*.aix
+.aix/
+# Local secrets, if anyone adds them
+.env
+*.env
+config.js
+.DS_Store
+node_modules/
+# Logs, if a bridge is ever run with its state folder inside the repo
+*.log

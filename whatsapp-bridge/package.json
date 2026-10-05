@@ -1,0 +1,12 @@
+{
+  "name": "whatsapp-bridge",
+  "private": true,
+  "description": "Lets the Rokid WhatsApp Bot read and reply to WhatsApp chats through this Mac.",
+  "type": "module",
+  "license": "MIT",
+  "engines": { "node": ">=20" },
+  "scripts": { "start": "node server.mjs" },
+  "dependencies": {
+    "@whiskeysockets/baileys": "7.0.0-rc14"
+  }
+}

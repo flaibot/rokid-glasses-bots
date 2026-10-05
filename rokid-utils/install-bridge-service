@@ -1,0 +1,121 @@
+#!/bin/zsh
+# Installs a bridge as a macOS background service (LaunchAgent): it starts
+# at login and restarts if it stops.
+#
+#   install-bridge-service                         Claude bridge: install (or reinstall) and start
+#   install-bridge-service --whatsapp              WhatsApp bridge: the same
+#   install-bridge-service [--whatsapp] --uninstall   stop and remove
+#
+# Log: ~/.claude-bridge/launchd.log or ~/.whatsapp-bridge/launchd.log (each
+# bridge also writes bridge.log there).
+#
+#   CLAUDE_BRIDGE_LABEL     service name (default local.claude-bridge)
+#   CLAUDE_BRIDGE_NODE      Node.js to use (default: newest nvm Node, else `node` on PATH)
+#   WHATSAPP_BRIDGE_LABEL   service name (default local.whatsapp-bridge)
+#   WHATSAPP_BRIDGE_NODE    Node.js to use, as above
+set -euo pipefail
+
+bridge=claude
+uninstall=0
+for arg in "$@"; do
+  case $arg in
+    --whatsapp) bridge=whatsapp ;;
+    --uninstall) uninstall=1 ;;
+    *) print -u2 "Unknown option: $arg (see the top of this script)"; exit 1 ;;
+  esac
+done
+
+if [[ $bridge == whatsapp ]]; then
+  label=${WHATSAPP_BRIDGE_LABEL:-local.whatsapp-bridge}
+  state_dir=$HOME/.whatsapp-bridge
+  node_var=WHATSAPP_BRIDGE_NODE
+  node_value=${WHATSAPP_BRIDGE_NODE:-}
+  default_port=8792
+else
+  label=${CLAUDE_BRIDGE_LABEL:-local.claude-bridge}
+  state_dir=$HOME/.claude-bridge
+  node_var=CLAUDE_BRIDGE_NODE
+  node_value=${CLAUDE_BRIDGE_NODE:-}
+  default_port=8790
+fi
+plist=$HOME/Library/LaunchAgents/$label.plist
+runner=${0:A:h}/../$bridge-bridge/run.sh
+runner=${runner:A}
+domain=gui/$(id -u)
+
+if (( uninstall )); then
+  launchctl bootout "$domain/$label" 2>/dev/null || true
+  rm -f "$plist"
+  print "Removed $label."
+  exit 0
+fi
+
+[[ -x $runner ]] || { print -u2 "Not found or not executable: $runner"; exit 1; }
+claude_bin=''
+if [[ $bridge == claude ]]; then
+  claude_bin=$(command -v claude || true)
+  [[ -n $claude_bin ]] || print -u2 "warning: 'claude' is not on your PATH; set claudePath in ~/.claude-bridge/config.json"
+else
+  # The WhatsApp bridge's one dependency (Baileys), pinned in package-lock.json.
+  if [[ ! -d ${runner:h}/node_modules/@whiskeysockets/baileys ]]; then
+    command -v npm >/dev/null || { print -u2 "Needs npm (comes with Node.js 20+) to install the WhatsApp bridge's dependencies."; exit 1; }
+    print "Installing the WhatsApp bridge's dependencies (npm ci)…"
+    (cd "${runner:h}" && npm ci --no-audit --no-fund)
+  fi
+fi
+mkdir -p "$state_dir" "$HOME/Library/LaunchAgents"
+chmod 700 "$state_dir"
+
+# PATH for the service: where claude, its tools and this shell's node live
+# (launchd's own PATH is minimal; run.sh falls back to `node` on it).
+node_bin=$(command -v node || true)
+service_path="${claude_bin:+${claude_bin:h}:}${node_bin:+${node_bin:h}:}/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+
+cat > "$plist" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>$label</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>$runner</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>$HOME</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>$service_path</string>
+    <key>HOME</key>
+    <string>$HOME</string>${node_value:+
+    <key>$node_var</key>
+    <string>$node_value</string>}
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ThrottleInterval</key>
+  <integer>10</integer>
+  <key>StandardOutPath</key>
+  <string>$state_dir/launchd.log</string>
+  <key>StandardErrorPath</key>
+  <string>$state_dir/launchd.log</string>
+</dict>
+</plist>
+EOF
+plutil -lint "$plist" >/dev/null
+
+launchctl bootout "$domain/$label" 2>/dev/null || true
+# bootout returns before the old service has fully stopped; bootstrap fails
+# with "Input/output error" until it has, so retry for a few seconds.
+for attempt in 1 2 3 4 5 6 7 8 9 10; do
+  launchctl bootstrap "$domain" "$plist" 2>/dev/null && break
+  (( attempt == 10 )) && { launchctl bootstrap "$domain" "$plist"; exit 1; }
+  sleep 1
+done
+print "Installed and started $label ($plist)."
+port=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("port", int(sys.argv[2])))' "$state_dir/config.json" $default_port 2>/dev/null || print $default_port)
+print -r -- "Check it: curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:$port/api/health   (401 = running)"
