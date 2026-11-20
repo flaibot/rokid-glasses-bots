@@ -20,7 +20,6 @@
 <script setup>
 import wx from 'wx';
 import BarcodeDetector from 'barcode';
-import { decodeWebP } from '../../lib/webp.js';
 import { loadSettings, saveSettings, isConfigured, settingsFromQr, api, ago, when } from '../../lib/bridge.js';
 import { VERSION } from '../../lib/version.js';
 import { listen } from '../../lib/listen.js';
@@ -53,6 +52,8 @@ const HOOK_FALLBACK_MS = 800;
 const TAP_GUARD_MS = 600; // one physical tap can arrive as Enter and GlobalHook
 const CHAT_POLL_MS = 8000; // new messages while a chat is open
 const LIST_POLL_MS = 20000; // the chats list while it's shown
+const QR_CAPTURE_TIMEOUT_MS = 15000;
+const QR_DETECT_TIMEOUT_MS = 15000;
 // A spoken name matching one contact this well, clearly ahead of the next,
 // goes straight to the confirm screen; otherwise you pick from a list.
 const SURE_SCORE = 0.85;
@@ -60,6 +61,22 @@ const SURE_GAP = 0.1;
 
 function clear(timer) {
   if (timer) clearTimeout(timer);
+}
+
+async function withTimeout(promise, timeoutMs, message) {
+  let timer = null;
+  const timeout = new Promise((resolve, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), timeoutMs);
+  });
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    clear(timer);
+  }
+}
+
+function nextUiFrame() {
+  return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
 // One line per row: Ink may not honour white-space: nowrap.
@@ -113,6 +130,8 @@ export default {
     this.pollTimer = null;
     this.lastSwipe = 0;
     this.lastTap = 0;
+    this.scanBusy = false;
+    this.scanAttempt = 0;
     // Bumped on every navigation; a load that finishes after the user moved
     // on is dropped.
     this.nav = 0;
@@ -139,12 +158,16 @@ export default {
   },
 
   onHide() {
+    this.scanAttempt += 1;
+    this.scanBusy = false;
     this.abortListening();
     this.stopPolling();
     this.cameraCtx = null;
   },
 
   onUnload() {
+    this.scanAttempt += 1;
+    this.scanBusy = false;
     this.abortListening();
     this.stopPolling();
     clear(this.hookTimer);
@@ -741,15 +764,31 @@ export default {
   },
 
   async scanQr() {
-    this.setData({ hint: 'Reading QR code…', error: '' });
+    if (this.scanBusy) return;
+    this.scanBusy = true;
+    const attempt = ++this.scanAttempt;
+    this.setData({ hint: 'Capturing QR code…', error: '' });
     try {
       if (!this.cameraCtx) this.cameraCtx = wx.media.createCameraContext();
-      const photo = await this.cameraCtx.takePhoto({ quality: 'high' });
-      if (!String(photo?.mimeType || '').toLowerCase().includes('webp')) {
-        throw new Error(`Unsupported photo format: ${photo?.mimeType || 'unknown'}`);
-      }
-      const image = await decodeWebP(photo.data, { output: 'gray' });
-      const codes = await new BarcodeDetector().detect({ data: image.gray, width: image.width, height: image.height });
+      if (!this.cameraCtx) throw new Error('Camera is unavailable');
+      const photo = await withTimeout(
+        this.cameraCtx.takePhoto({ quality: 'normal', mode: 'wide', enableSystemPreview: false }),
+        QR_CAPTURE_TIMEOUT_MS,
+        'Camera timed out. Tap to try again',
+      );
+      if (attempt !== this.scanAttempt) return;
+      const mimeType = String(photo?.mimeType || '');
+      if (!photo?.data || !mimeType) throw new Error('Camera returned an invalid image');
+
+      this.setData({ hint: 'Reading QR code…', error: '' });
+      await nextUiFrame();
+      const imageBlob = new Blob([photo.data], { type: mimeType });
+      const codes = await withTimeout(
+        new BarcodeDetector({ formats: ['qr_code'] }).detect(imageBlob),
+        QR_DETECT_TIMEOUT_MS,
+        'QR reader timed out. Tap to try again',
+      );
+      if (attempt !== this.scanAttempt) return;
       const next = (codes || []).map((code) => settingsFromQr(String(code.rawValue || ''))).find(Boolean);
       if (!next) {
         this.setData({ hint: 'Look at the setup QR code and tap', error: codes?.length ? 'That is not a WhatsApp Bot setup code' : 'No QR code found. Move closer and tap again' });
@@ -760,7 +799,10 @@ export default {
       this.cameraCtx = null;
       this.start();
     } catch (e) {
+      if (attempt !== this.scanAttempt) return;
       this.setData({ hint: 'Look at the setup QR code and tap', error: e.message || 'Could not read the QR code' });
+    } finally {
+      if (attempt === this.scanAttempt) this.scanBusy = false;
     }
   },
 };

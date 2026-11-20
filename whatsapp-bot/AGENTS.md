@@ -1,6 +1,6 @@
 # Agent: WhatsApp Bot
 
-- **Version**: 0.1.0
+- **Version**: 0.1.1
 - **Description**: Read your recent WhatsApp chats and reply by voice. Also
   handles "send a WhatsApp to Mom saying I'm on my way" from Rokid's
   assistant: it finds the contact, shows the message, and sends it only
