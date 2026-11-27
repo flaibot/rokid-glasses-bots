@@ -19,12 +19,25 @@
 <script setup>
 import wx from 'wx';
 import BarcodeDetector from 'barcode';
-import { askHermes, plainText } from '../../lib/hermes.js';
+import { plainText } from '../../lib/hermes.js';
+import { splitVisual } from '../../lib/visual.js';
+import { askImage, wantsImage, safeReply } from '../../lib/image-turn.js';
+import { drawImageBytes } from '../../lib/image-bytes.js';
+import { askHermesTurn } from '../../lib/hermes-runs.js';
+import {
+  createStatus,
+  applyStreamFrame,
+  applyRunStart,
+  applyRunStatus,
+  markStopped,
+  markFailed,
+  statusView,
+  requestedFromSettings,
+} from '../../lib/status.js';
 import { speakThen } from '../../lib/speak.js';
 import { listen } from '../../lib/listen.js';
 import { conversations, turnsOf, addTurn, ago } from '../../lib/history.js';
 import { VERSION } from '../../lib/version.js';
-import { decodeWebP } from '../../lib/webp.js';
 import { loadSettings, saveSettings, isConfigured, settingsFromQr, newConversation } from '../../lib/settings.js';
 
 // Opening the agent starts listening straight away, and it listens again after
@@ -34,11 +47,12 @@ import { loadSettings, saveSettings, isConfigured, settingsFromQr, newConversati
 // "setup") reopens the scanner.
 const HINT = {
   idle: 'Tap to talk · swipe for menu',
-  listening: 'Listening… pause to send · tap = send now · swipe = read',
-  thinking: 'Thinking… tap to cancel',
+  listening: 'Listening… tap = send · swipe = menu',
+  thinking: 'Thinking… tap to add another · swipe to cancel',
   speaking: 'Speaking… tap to talk',
   error: 'Tap to try again',
   menu: 'Swipe to choose · tap to select',
+  status: 'Swipe to page · tap to close',
   scan: 'Look at the setup QR code and tap',
   decoding: 'Reading QR code…',
 };
@@ -49,6 +63,19 @@ const HINT = {
 const LINE_UNITS = 21; // full-width characters per row; ASCII counts 0.55
 const PAGE_ROWS = 7;
 const SWIPE_DEBOUNCE_MS = 250; // one swipe sends two arrow keys
+const QR_TIMEOUT_MS = 15000;
+
+async function withQrTimeout(promise, message) {
+  let timer;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((resolve, reject) => { timer = setTimeout(() => reject(new Error(message)), QR_TIMEOUT_MS); }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 function hardWrap(text) {
   const out = [];
@@ -124,7 +151,7 @@ function isLaunchPhrase(text) {
 
 export default {
   data: {
-    version: `v${VERSION}`,
+    version: `v${VERSION}-V5N`,
     state: 'idle',
     hint: HINT.idle,
     question: '',
@@ -132,9 +159,19 @@ export default {
     tool: '',
     error: '',
     answerLines: [],
+    visualType: '',
+    visualFormula: '',
+    visualCaption: '',
+    visualPoints: [],
     rows: [],
     menuPos: '',
     page: '',
+    // Status view: a 14px line while a turn is in flight, and the fuller
+    // panel (menu › More › Status) once a turn has run. Both are fed only by
+    // fields the server emitted; lib/status.js never guesses.
+    statusBar: '',
+    statusLines: [],
+    statusPage: '',
   },
 
   onLoad(query) {
@@ -145,6 +182,8 @@ export default {
     this.recognition = null;
     this.controller = null;
     this.cameraCtx = null;
+    this.scanAttempt = 0;
+    this.scanBusy = false;
     this.stopSpeech = null;
     this.settings = loadSettings();
     if (!isConfigured(this.settings)) {
@@ -165,12 +204,14 @@ export default {
     this.setState('idle', {
       question: turn.q,
       answer: turn.a,
+      visualType: '', visualFormula: '', visualCaption: '', visualPoints: [],
       tool: '',
       hint: `${i + 1}/${this.turns.length} · ${ago(turn.at)} · tap to talk`,
     });
   },
 
   onShow() {
+    if (this.imageBytes && this.data.visualType === 'image') this.paintImage().catch(() => {});
     if (this.data.state === 'scan') this.cameraCtx = wx.media.createCameraContext();
     else if (this.data.state !== 'idle') return;
     else if (this.pendingPrompt) {
@@ -181,12 +222,18 @@ export default {
   },
 
   onHide() {
+    this.scanAttempt += 1;
+    this.scanBusy = false;
+    if (this.data.state === 'decoding') this.setState('scan');
     this.stopListening(true);
     this.endSpeech();
     this.cameraCtx = null;
   },
 
   onUnload() {
+    this.scanAttempt += 1;
+    this.scanBusy = false;
+    this.cameraCtx = null;
     this.stopListening(true);
     this.endSpeech();
     this.cancelRequest();
@@ -218,7 +265,7 @@ export default {
   },
 
   fail(message) {
-    this.setState('error', { error: message, tool: '' });
+    this.setState('error', { error: message, tool: '', statusBar: '' });
   },
 
   onKeyDown(event) {
@@ -229,9 +276,12 @@ export default {
 
   onKeyUp(event) {
     // We handle these ourselves; Backspace keeps its default (back / close)
-    // except in the menu, where it steps back.
+    // except in the menu, where it steps back, and in the status panel.
     if (['Enter', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(event.code)) event.preventDefault();
-    if (event.code === 'Backspace' && this.data.state === 'menu') {
+    if (event.code === 'Backspace' && this.data.state === 'status') {
+      event.preventDefault();
+      this.closeStatus();
+    } else if (event.code === 'Backspace' && this.data.state === 'menu') {
       event.preventDefault();
       if (this.menuName !== 'main') this.openMenu(this.menuName === 'settings' ? 'more' : 'main');
       else this.closeMenu();
@@ -249,10 +299,17 @@ export default {
   primaryAction() {
     const { state } = this.data;
     if (state === 'menu') this.activate(this.menu.items[this.menu.sel]);
+    else if (state === 'status') this.closeStatus();
     else if (state === 'listening') this.stopListening(false);
-    else if (state === 'thinking') this.cancelRequest();
+    else if (state === 'thinking') {
+      // Tap while it works speaks the NEXT question and holds it in a queue;
+      // the request in flight keeps running. Swipe cancels instead.
+      if (this.queueListening) this.stopListening(false);
+      else this.startQueueListening();
+    }
     else if (state === 'speaking') {
       this.endSpeech();
+      if (this.drainQueue()) return;
       this.startListening();
     }
     else if (state === 'scan') this.scanQr();
@@ -270,12 +327,25 @@ export default {
       this.moveMenu(dir);
       return;
     }
-    // It listens as soon as it opens; a swipe means "let me read first":
-    // stop listening (nothing is sent) and browse from the shown exchange.
-    if (state === 'listening') {
-      this.stopListening(true);
-      if (dir > 0) this.openMenu('main');
-      else if ((this.turns || []).length) this.showTurn(Math.max(0, (this.viewTurn ?? this.turns.length - 1) - 1));
+    if (state === 'status') {
+      this.flipStatus(dir);
+      return;
+    }
+    // Swipe while it is working out a reply cancels the request.
+    if (state === 'thinking') {
+      if (this.queueListening) {
+        this.stopListening(true);
+        this.setData({ question: '', hint: HINT.thinking });
+        return;
+      }
+      this.cancelRequest();
+      return;
+    }
+    // A swipe while listening or hearing a reply opens the controls.
+    if (state === 'listening' || state === 'speaking') {
+      if (state === 'listening') this.stopListening(true);
+      else this.endSpeech();
+      this.openMenu('main');
       return;
     }
     // The reader took over: stop jumping to the newest page while streaming.
@@ -301,7 +371,7 @@ export default {
 
   startListening() {
     if (!isConfigured(this.settings)) return;
-    this.setState('listening', { error: '', tool: '', hint: 'Listening… pause to send · tap = send now · swipe = read' });
+    this.setState('listening', { error: '', tool: '', hint: HINT.listening });
     // Callbacks can run before listen() returns (a mic error), so the
     // handle check allows that case.
     let handle = null;
@@ -341,6 +411,10 @@ export default {
     if (!handle) return;
     if (discard) {
       this.recognition = null;
+      if (this.queueListening) {
+        this.queueListening = false;
+        this.finishQueueCapture?.();
+      }
       handle.abort();
       if (this.data.state === 'listening') this.setState('idle');
     } else {
@@ -348,18 +422,79 @@ export default {
     }
   },
 
+  // ---------------------------------------------------------------- queue
+
+  // Said while a reply is still being worked out: hold the words until the
+  // request in flight has been answered, then send them in order.
+  startQueueListening() {
+    if (!isConfigured(this.settings)) return;
+    this.queue = this.queue || [];
+    this.queueListening = true;
+    this.queueCaptureDone = new Promise((resolve) => { this.finishQueueCapture = resolve; });
+    this.setData({ question: '', hint: 'Listening for another… tap = send · swipe = cancel' });
+    let handle = null;
+    const mine = () => !handle || this.recognition === handle;
+    handle = listen({
+      onText: (heard) => {
+        if (mine()) this.setData({ question: heard });
+      },
+      onError: () => {
+        if (!mine()) return;
+        this.recognition = null;
+        handle = undefined;
+        this.queueListening = false;
+        this.finishQueueCapture?.();
+        this.setData({ question: '', hint: HINT.thinking, error: '' });
+      },
+      onDone: (heard) => {
+        if (!mine()) return;
+        this.recognition = null;
+        this.queueListening = false;
+        this.finishQueueCapture?.();
+        const text = heard.trim();
+        if (!text) {
+          this.setData({ question: '', hint: HINT.thinking });
+          return;
+        }
+        this.queue.push(text);
+        this.setData({ question: text, hint: `Queued (${this.queue.length}) · tap to add another` });
+      },
+    });
+    if (this.queueListening) this.recognition = handle;
+  },
+
+  // Sends the next held question, if any and nothing is running.
+  drainQueue() {
+    const queue = this.queue || [];
+    if (!queue.length || this.controller) return false;
+    const next = queue.shift();
+    try {
+      this.send(next);
+    } catch (e) {
+      return false;
+    }
+    return true;
+  },
+
   // ---------------------------------------------------------------- Hermes
 
   // Stops the request and returns to idle right away; send() ignores
-  // anything that arrives for the cancelled request.
+  // anything that arrives for the cancelled request. The status view records
+  // the client-side fact ("stop requested"), then refines it from onStop once
+  // Hermes answers the /stop call: "stop sent" or "stopped locally".
   cancelRequest() {
     const controller = this.controller;
+    this.queue = [];
+    if (this.queueListening) this.stopListening(true);
+    this.queueListening = false;
     if (!controller) return;
     this.controller = null;
+    if (this.status) markStopped(this.status, 'stop requested');
     try {
       controller.abort();
     } catch (e) {}
-    this.setState('idle', { tool: '', answer: this.data.answer || '(cancelled)', hint: 'Cancelled · tap to talk' });
+    const hint = this.imageRequest ? 'Stopped waiting · Hermes may still finish' : 'Cancelled · tap to talk';
+    this.setState('idle', { tool: '', answer: this.data.answer || '(cancelled)', hint, statusBar: '' });
   },
 
   setSmart(smart) {
@@ -371,6 +506,74 @@ export default {
       answer: smart ? 'Smart mode: slower, more careful replies. Say "fast mode" to switch back.' : 'Fast mode: quickest replies. Say "smart mode" for harder questions.',
     });
     this.startListening();
+  },
+
+  // ---------------------------------------------------------------- status
+
+  // The panel for the last turn. Reached only on purpose (Menu › More ›
+  // Status), so it never takes space from a reply; while a turn is in flight
+  // the one-line bar is already on screen.
+  openStatus() {
+    if (!this.status) return;
+    this.endSpeech();
+    this.menuName = '';
+    this.statusPageIndex = 0;
+    this.statusRows = [];
+    this.setState('status', { rows: [], tool: '', error: '' });
+    this.renderStatus();
+  },
+
+  renderStatus() {
+    if (!this.status) {
+      this.closeStatus();
+      return;
+    }
+    // Same record the bar reads: panel rows are emitted fields or the word
+    // `unavailable`, never derived facts (lib/status.js, docs/PROTOCOL-RUNS.md).
+    const view = statusView(this.status, { expanded: true, width: 30 });
+    this.statusRows = view.lines;
+    const pages = Math.max(1, Math.ceil(this.statusRows.length / PAGE_ROWS));
+    this.statusPageIndex = Math.max(0, Math.min(pages - 1, this.statusPageIndex || 0));
+    const lines = this.statusRows
+      .slice(this.statusPageIndex * PAGE_ROWS, (this.statusPageIndex + 1) * PAGE_ROWS)
+      .map((line, i) => ({ id: `s${this.statusPageIndex}_${i}`, t: line }));
+    this.setData({ statusLines: lines, statusPage: pages > 1 ? `${this.statusPageIndex + 1}/${pages}` : '' });
+  },
+
+  // Repaints the one-line bar only when its text changes. The bar carries
+  // elapsed time, so that is at most once a second — not once per stream
+  // frame, which would double the page's setData rate for no visible gain.
+  paintStatusBar() {
+    if (!this.status) return;
+    const bar = statusView(this.status, { width: 30 }).bar;
+    if (bar === this.data.statusBar) return;
+    this.setData({ statusBar: bar });
+  },
+
+  flipStatus(dir) {
+    const pages = Math.max(1, Math.ceil((this.statusRows || []).length / PAGE_ROWS));
+    const next = Math.max(0, Math.min(pages - 1, (this.statusPageIndex || 0) + dir));
+    if (next === (this.statusPageIndex || 0)) return;
+    this.statusPageIndex = next;
+    this.renderStatus();
+  },
+
+  closeStatus() {
+    this.statusRows = [];
+    this.statusPageIndex = 0;
+    this.setState('idle', { rows: [], statusLines: [], statusPage: '' });
+    // Back to the reply that was showing.
+    this.setData(this.pageData());
+    if (this.imageBytes && this.data.visualType === 'image') setTimeout(() => this.paintImage().catch(() => {}), 0);
+  },
+
+  // Switching conversations: the last run belongs to the old one, so the
+  // panel must not present it as this conversation's.
+  clearStatus() {
+    this.status = null;
+    this.statusRows = [];
+    this.statusPageIndex = 0;
+    this.setData({ statusBar: '', statusLines: [], statusPage: '' });
   },
 
   // ---------------------------------------------------------------- menu
@@ -394,6 +597,10 @@ export default {
       if (this.data.answer) items.push({ title: '↺ Repeat last reply', act: 'repeat' });
       if (this.lastQuestion) items.push({ title: '↻ Ask again', sub: this.lastQuestion, act: 'retry' });
       items.push({ title: s.SMART ? 'Mode: Smart → switch to Fast' : 'Mode: Fast → switch to Smart', sub: s.SMART ? 'Fast: quickest replies' : 'Smart: slower, more careful', act: 'mode' });
+      // Only after a turn has run in this session: the panel reports that
+      // turn's run, and says `unavailable` for anything the stream did not
+      // carry (model actually served, context window, reasoning effort).
+      if (this.status) items.push({ title: '◱ Status ›', sub: 'Model, tools, timing · last turn', act: 'status' });
       items.push({ title: '○ Settings ›', sub: 'Voice, listening, setup QR', act: 'settings' });
       items.push({ title: '✕ Close Hermes Bot', act: 'close' });
     } else if (name === 'earlier') {
@@ -451,6 +658,7 @@ export default {
     this.setState('idle', { rows: [] });
     // Back to the reply that was showing.
     this.setData(this.pageData());
+    if (this.imageBytes && this.data.visualType === 'image') setTimeout(() => this.paintImage().catch(() => {}), 0);
   },
 
   activate(item) {
@@ -464,6 +672,7 @@ export default {
       case 'resume':
         save({ CONVERSATION: item.id });
         this.turns = turnsOf(item.id);
+        this.clearStatus();
         this.menuName = '';
         if (this.turns.length) this.showTurn(this.turns.length - 1);
         else this.closeMenu();
@@ -508,6 +717,9 @@ export default {
         this.closeMenu();
         this.setSmart(!s.SMART);
         break;
+      case 'status':
+        this.openStatus();
+        break;
       case 'toggleSpeak':
         save({ SPEAK_REPLIES: !s.SPEAK_REPLIES });
         this.openMenu('settings');
@@ -534,68 +746,156 @@ export default {
   },
 
   startNewConversation() {
+    this.imageBytes = null;
+    this.queue = [];
+    this.queueListening = false;
     this.settings = { ...this.settings, CONVERSATION: newConversation() };
     saveSettings(this.settings);
     this.turns = [];
     this.viewTurn = null;
-    this.setState('idle', { question: '', answer: 'New conversation started. Ask me anything.', tool: '' });
+    this.clearStatus();
+    this.setState('idle', { question: '', answer: 'New conversation started. Ask me anything.', visualType: '', visualFormula: '', visualCaption: '', visualPoints: [], tool: '' });
     this.startListening();
   },
 
   async send(question) {
+    this.imageBytes = null;
     this.lastQuestion = question;
     this.viewTurn = null;
     const controller = new AbortController();
     this.controller = controller;
     this.userFlipped = false;
-    this.setState('thinking', { question, answer: '', tool: '' });
+    const isImage = wantsImage(question);
+    // One status record per turn. It is fed only by what this turn's stream
+    // emits (lib/status.js reads nothing else), so `model act` etc. can be
+    // `unavailable` but never a guess. The one-line bar shows while the turn
+    // is in flight; menu › More › Status opens the panel afterwards.
+    const status = createStatus(requestedFromSettings(this.settings));
+    this.status = isImage ? null : status;
+    const mine = () => this.status === status;
+    const live = () => this.controller === controller && mine();
+    this.setState('thinking', { question, answer: '', tool: '', visualType: '', visualFormula: '', visualCaption: '', visualPoints: [], statusBar: isImage ? '' : statusView(status, { width: 30 }).bar });
+    // The bar carries elapsed time; a run can sit in a silent tool call for
+    // many seconds, so tick it once a second rather than only on frames.
+    const tick = setInterval(() => {
+      if (live()) this.paintStatusBar();
+    }, 1000);
 
     try {
-      const reply = await askHermes(
+      let imageResult = null;
+      this.imageRequest = isImage;
+      if (isImage && (typeof createImageBitmap !== 'function' || typeof Blob !== 'function')) throw new Error('This glasses runtime cannot decode images.');
+      const reply = isImage ? ((imageResult = await askImage(this.settings, question, controller.signal)), imageResult.text) : await askHermesTurn(
         this.settings,
         question,
         {
           onText: (text) => {
+            if (!live()) return;
             // paged() resets to page 1 or the last page; keep the reader's
             // page once they have swiped.
             const keep = this.userFlipped ? this.pageIndex : null;
-            const update = this.paged({ answer: plainText(text), tool: '' }, !this.userFlipped);
+            const update = this.paged({ answer: plainText(safeReply(splitVisual(text).text)), tool: '' }, !this.userFlipped);
             if (keep != null) {
               this.pageIndex = Math.min(keep, Math.max(0, Math.ceil(this.answerRows.length / PAGE_ROWS) - 1));
               Object.assign(update, this.pageData());
             }
             this.setData(update);
           },
-          onTool: (name) => this.setData({ tool: `Using ${name}…` }),
+          onTool: (name) => {
+            if (live()) this.setData({ tool: `Using ${name}…` });
+          },
+          // askHermesTurn picks the endpoint: /v1/runs for a conversation it
+          // can address by session id, or one bridge turn on /v1/responses
+          // for a conversation created before this client, to learn its
+          // session id (lib/hermes-runs.js). Both emit frames here.
+          onEvent: (frame) => {
+            if (!mine()) return;
+            applyStreamFrame(status, frame);
+            if (live()) this.paintStatusBar();
+          },
+          onRun: (run) => {
+            if (!mine()) return;
+            applyRunStart(status, run);
+            if (live()) this.paintStatusBar();
+          },
+          onPath: (path) => {
+            // 'bridge' = this turn had to take /v1/responses; `model act`
+            // then stays unavailable, because that route never reports it.
+            if (mine()) status.endpoint = path === 'bridge' ? 'responses' : 'runs';
+          },
+          onStop: ({ mode }) => {
+            // The client-side fact, refined by what Hermes answered.
+            if (!mine()) return;
+            markStopped(status, mode === 'server' ? 'stop sent' : 'stopped locally');
+            if (this.data.state === 'status') this.renderStatus();
+          },
+          onIncomplete: (info) => {
+            // The event stream died with the run still going: fold in the
+            // polled status instead of pretending the turn finished.
+            if (!mine()) return;
+            if (info?.status) applyRunStatus(status, info.status);
+            if (live()) this.paintStatusBar();
+          },
         },
         controller.signal,
       );
+      // Do not start speech or another recognizer while the queued utterance
+      // is still being captured, even if the reply arrived first.
+      if (this.queueListening) await this.queueCaptureDone;
+      if (this.controller !== controller) return;
+      if (imageResult?.image) {
+        this.imageBytes = imageResult.image;
+        await new Promise(resolve => this.setData({ visualType: 'image' }, resolve));
+        if (this.controller !== controller) return;
+        try { await this.paintImage(); }
+        catch (_) { this.imageBytes = null; this.setData({ visualType: '' }); imageResult.reason = 'Image received but could not be displayed on these glasses.'; }
+      }
       if (this.controller !== controller) return;
       this.controller = null;
-      const answer = plainText(reply) || '(no reply)';
+      const parsed = splitVisual(reply);
+      const baseAnswer = plainText(safeReply(parsed.text)).replace(/\[image\]/g, '').trim();
+      const answer = imageResult?.reason ? [baseAnswer, imageResult.reason].filter(Boolean).join(' ') : baseAnswer || (this.imageBytes ? 'Image displayed.' : '(no spoken reply)');
+      this.setData({ visualType: this.imageBytes ? 'image' : parsed.visual?.type || '', visualFormula: parsed.visual?.tex || '', visualCaption: parsed.visual?.caption || '', visualPoints: parsed.visual?.points || [] });
       addTurn(this.settings.CONVERSATION, question, answer);
       this.turns = turnsOf(this.settings.CONVERSATION);
       this.viewTurn = this.turns.length - 1;
       if (this.settings.SPEAK_REPLIES && reply) {
-        this.setState('speaking', { answer, tool: '' });
+        this.setState('speaking', { answer, tool: '', statusBar: '' });
         this.stopSpeech = speakThen(answer, () => {
           this.stopSpeech = null;
           if (this.data.state !== 'speaking') return;
+          if (this.drainQueue()) return;
           if (this.settings.KEEP_LISTENING) this.startListening();
           else this.setState('idle');
         });
       } else {
-        this.setState('idle', { answer, tool: '' });
+        this.setState('idle', { answer, tool: '', statusBar: '' });
+        if (this.drainQueue()) return;
         if (this.settings.KEEP_LISTENING) this.startListening();
       }
     } catch (e) {
       // Cancelled by the user: cancelRequest() already updated the screen.
       if (this.controller !== controller) return;
+      if (this.queueListening) this.stopListening(true);
       this.controller = null;
       const message = e.message || 'Could not reach Hermes';
+      // A failure the stream did not report as a terminal event (auth,
+      // transport, a refused run) is recorded as a client-side fact, so the
+      // panel cannot look like it is still thinking.
+      if (mine()) markFailed(status, message);
       if (/^Hermes 401/.test(message)) this.openScanner('Key rejected. Scan the setup QR code again');
       else this.fail(message);
+    } finally {
+      clearInterval(tick);
+      if (this.controller === controller || !this.controller) this.imageRequest = false;
     }
+  },
+
+  async paintImage() {
+    if (!this.imageBytes) return;
+    const ctx = wx.createCanvasContext('shot');
+    if (!ctx) throw new Error('Canvas unavailable');
+    await drawImageBytes(ctx, this.imageBytes, 440, 200);
   },
 
   endSpeech() {
@@ -607,25 +907,37 @@ export default {
   // ---------------------------------------------------------------- setup QR
 
   openScanner(message) {
+    this.scanAttempt += 1;
+    this.scanBusy = false;
     this.stopListening(true);
     this.cameraCtx = wx.media.createCameraContext();
     this.setState('scan', { error: message, answer: '', question: '', tool: '' });
   },
 
   async scanQr() {
-    this.setState('decoding', { error: '' });
+    if (this.scanBusy) return;
+    this.scanBusy = true;
+    const attempt = ++this.scanAttempt;
+    this.setState('decoding', { hint: 'Opening camera…', error: '' });
     try {
       if (!this.cameraCtx) this.cameraCtx = wx.media.createCameraContext();
-      const photo = await this.cameraCtx.takePhoto({ quality: 'high' });
-      if (!String(photo?.mimeType || '').toLowerCase().includes('webp')) {
-        throw new Error(`Unsupported photo format: ${photo?.mimeType || 'unknown'}`);
-      }
-      const image = await decodeWebP(photo.data, { output: 'gray' });
-      const codes = await new BarcodeDetector().detect({
-        data: image.gray,
-        width: image.width,
-        height: image.height,
-      });
+      if (!this.cameraCtx) throw new Error('Camera is unavailable');
+      const photo = await withQrTimeout(
+        this.cameraCtx.takePhoto({ quality: 'high', mode: 'wide', enableSystemPreview: true }),
+        'Camera timed out. Tap to try again',
+      );
+      if (attempt !== this.scanAttempt) return;
+      const mimeType = String(photo?.mimeType || '');
+      if (!photo?.data || !mimeType) throw new Error('Camera returned an invalid image');
+      this.setData({ hint: 'Reading QR code…', error: '' });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      if (attempt !== this.scanAttempt) return;
+      const image = new Blob([photo.data], { type: mimeType });
+      const codes = await withQrTimeout(
+        new BarcodeDetector({ formats: ['qr_code'] }).detect(image),
+        'QR reader timed out. Tap to try again',
+      );
+      if (attempt !== this.scanAttempt) return;
       if (!codes || codes.length === 0) {
         this.setState('scan', { error: 'No QR code found. Move closer and tap again' });
         return;
@@ -643,7 +955,10 @@ export default {
       this.setState('idle', { error: '', answer: 'Connected. Ask me anything.' });
       this.startListening();
     } catch (e) {
+      if (attempt !== this.scanAttempt) return;
       this.setState('scan', { error: e.message || 'Could not read the QR code' });
+    } finally {
+      if (attempt === this.scanAttempt) this.scanBusy = false;
     }
   },
 };
@@ -654,18 +969,34 @@ export default {
     <camera class="camera" ink:if="{{state === 'scan' || state === 'decoding'}}"></camera>
     <block ink:else>
       <text class="question" ink:if="{{question}}">› {{question}}</text>
+      <canvas id="shot" canvas-id="shot" width="440" height="200" class="shot" ink:if="{{visualType === 'image' && state !== 'menu' && state !== 'status'}}"></canvas>
       <view class="answer-box" ink:if="{{state === 'menu'}}">
         <view ink:for="{{rows}}" ink:key="id" class="{{item.cls}}" bindtap="onRowTap" data-index="{{item.index}}">
           <text class="title">{{item.title}}</text>
           <text class="sub" ink:if="{{item.sub}}">{{item.sub}}</text>
         </view>
       </view>
+      <view class="answer-box" ink:elif="{{state === 'status'}}">
+        <text ink:for="{{statusLines}}" ink:key="id" class="sline">{{item.t}}</text>
+      </view>
+      <view class="answer-box" ink:elif="{{visualType === 'image'}}">
+        <text class="sline">{{answer}}</text>
+      </view>
+      <view class="answer-box" ink:elif="{{visualType === 'chart'}}">
+        <text class="sline">{{visualCaption}}</text>
+        <chart class="visual-chart" type="line" series='[{"xName":"x","yName":"value","smooth":false}]' data="{{visualPoints}}"></chart>
+      </view>
+      <view class="answer-box" ink:elif="{{visualType === 'formula'}}">
+        <formula style="display: block;">{{visualFormula}}</formula>
+      </view>
       <view class="answer-box" ink:else>
         <text ink:for="{{answerLines}}" ink:key="id" class="answer">{{item.t}}</text>
       </view>
       <text class="tool" ink:if="{{state === 'menu'}}">{{menuPos}}</text>
+      <text class="tool" ink:elif="{{state === 'status'}}">{{statusPage}}</text>
       <text class="tool" ink:elif="{{page}}">page {{page}} · swipe for more</text>
       <text class="tool" ink:if="{{tool}}">{{tool}}</text>
+
     </block>
     <text class="error" ink:if="{{error}}">{{error}}</text>
     <view class="footrow">
@@ -708,6 +1039,9 @@ export default {
   overflow: hidden;
 }
 
+.visual-chart { width: 280px; height: 130px; }
+.shot { width: 440px; height: 200px; }
+
 .answer {
   font-size: 20px;
   line-height: 28px;
@@ -745,6 +1079,20 @@ export default {
   color: rgba(64, 255, 94, 0.48);
 }
 
+/* The status panel and the one-line bar reuse the app's 14px size: 30
+   display units per row (lib/status.js fit()). */
+.sline {
+  font-size: 14px;
+  line-height: 18px;
+  color: rgba(64, 255, 94, 0.72);
+}
+
+.statusbar {
+  font-size: 14px;
+  margin-top: 4px;
+  color: rgba(64, 255, 94, 0.48);
+}
+
 .error {
   color: #40ff5e;
 }
@@ -756,9 +1104,9 @@ export default {
 }
 
 .ver {
-  font-size: 10px;
+  font-size: 14px;
   margin-left: 8px;
-  color: rgba(64, 255, 94, 0.24);
+  color: #40ff5e;
 }
 
 .hint {

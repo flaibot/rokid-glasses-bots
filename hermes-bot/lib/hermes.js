@@ -3,7 +3,7 @@
 
 // Splits an SSE byte stream into { event, data } frames. Lines starting with
 // ':' are Hermes keepalives and are skipped.
-function createSseParser(onFrame) {
+export function createSseParser(onFrame) {
   let buffer = '';
   let event = '';
   let data = [];
@@ -36,6 +36,7 @@ export const GLASSES_INSTRUCTIONS = [
   'Keep replies VERY short: one to three short sentences. No markdown, lists or tables unless the user asks.',
   "The user's messages are speech-to-text, so expect misheard, missing or cut-off words. Work out the likely meaning.",
   'If you have to assume what the user meant, say so in a few words at the very start (e.g. "Assuming you meant X: ..."). If it is unclear and it matters, ask one short question instead of guessing.',
+  'For an equation or mathematical expression when a graph was not requested, display it using TeX in exactly one <visual>{"type":"formula","tex":"E=mc^2"}</visual> after the spoken answer; use valid JSON and double-escape backslashes. For a graph, plot, or chart, ALWAYS use the native chart, not an image: append exactly one <visual>{"type":"chart","points":[{"x":0,"y":0},{"x":1,"y":1},{"x":2,"y":4}],"caption":"x versus y"}</visual>. Calculate points for the specified function or use actual supplied data; never invent measurements. Keep axes and units meaningful in the caption, use 2 to 30 ordered points, and explain what the points represent. Never ask an image tool to make a chart unless the user explicitly requests an image. No visual tag for non-mathematical replies.',
   'Be quick: as few tool calls as possible, and do not explore.',
 ].join(' ');
 
@@ -69,6 +70,15 @@ export async function askHermes(config, input, handlers = {}, signal) {
     throw new Error(`Hermes ${response.status}: ${body.slice(0, 160)}`);
   }
 
+  // Prototype hook: hands the caller the response headers (the runs client
+  // needs X-Hermes-Session-Id to keep a conversation on one server-side
+  // session). Observer only: no-op when unused and cannot throw into the reply.
+  if (handlers.onResponse) {
+    try {
+      handlers.onResponse(response);
+    } catch (e) {}
+  }
+
   // Text per output item; the answer is the last non-commentary message.
   const texts = {};
   const commentary = {};
@@ -76,7 +86,15 @@ export async function askHermes(config, input, handlers = {}, signal) {
   let finalText = '';
   let failure = null;
 
-  const parse = createSseParser(({ data }) => {
+  const parse = createSseParser(({ event, data }) => {
+    // Prototype hook for the status view (lib/status.js). Optional and
+    // isolated: no-op when unused, and an observer that throws is ignored so
+    // it can never break the reply. The event name is passed through too.
+    if (handlers.onEvent) {
+      try {
+        handlers.onEvent({ event, data });
+      } catch (e) {}
+    }
     let msg;
     try {
       msg = JSON.parse(data);

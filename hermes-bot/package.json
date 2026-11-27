@@ -1,0 +1,9 @@
+{
+  "name": "hermes-bot-status-prototype",
+  "private": true,
+  "type": "module",
+  "description": "Local test harness only. Not part of the AIX package (see .aixignore).",
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  }
+}

@@ -13,7 +13,8 @@ glasses, the key and Tailscale.
 |---|---|
 | "Hi Rokid, open Hermes Bot" | Opens on your last exchange and starts listening. |
 | Speak | Sends it once you've been quiet for about 3 seconds (short pauses are fine). |
-| Tap the temple | Talk now · send now (while listening) · cancel (while thinking) · interrupt a spoken reply and talk. |
+| Tap the temple | Talk now · send now (while listening) · queue another question (while thinking) · interrupt a spoken reply. |
+| Swipe while thinking | Request cancellation and clear queued questions. |
 | Swipe | Next / previous page of a long reply; before page 1, earlier exchanges. While it's listening, a swipe stops listening (nothing is sent) so you can read. |
 | Swipe past the last page | Opens the **menu**. |
 | Double tap (Back) | Steps out of a submenu, or closes the app. |
@@ -98,9 +99,8 @@ smart, slow one.
 
 ## How it works
 
-- `POST /v1/responses` on your Hermes API server, streamed, with a named
-  `conversation` so Hermes keeps the history. Tool use shows as "Using …".
-- Cancel closes the stream, so Hermes stops the turn too.
+- `POST /v1/runs` and its event stream serve normal requests; older conversations may use a `/v1/responses` bridge to discover their session. Cancellation requests the server to stop the run.
+- Explicit image requests use non-streaming `/v1/chat/completions`, which can return bounded image data over the authenticated connection. Cancelling stops the client waiting but may not stop server processing. Charts and formulas use native AIUI components when valid structured output is returned. Runtime support and exact hardware behaviour require device verification.
 - `lib/listen.js` keeps listening across pauses: the glasses' recognizer
   stops at the first pause, so a new segment is started and the words are
   joined. Tune `PAUSE_MS` there.
